@@ -18,7 +18,7 @@ pub trait Session: Send + Sync {
 
     fn comment_issue(&self, key: &str, comment: &str) -> Result<()>;
 
-    fn add_version(&self, proj: &str, version: &str) -> Result<()>;
+    fn add_version(&self, proj: &str, version: &str) -> Result<Version>;
     fn get_versions(&self, proj: &str) -> Result<Vec<Version>>;
     fn assign_fix_version(&self, key: &str, version: &str) -> Result<()>;
     fn reorder_version(&self, version: &Version, position: JiraVersionPosition) -> Result<()>;
@@ -134,7 +134,7 @@ impl Session for JiraSession {
         )
     }
 
-    fn add_version(&self, proj: &str, version: &str) -> Result<()> {
+    fn add_version(&self, proj: &str, version: &str) -> Result<Version> {
         #[derive(Serialize)]
         struct AddVersionReq {
             name: String,
@@ -145,9 +145,10 @@ impl Session for JiraSession {
             name: version.into(),
             project: proj.into(),
         };
-        self.client.post_void("/version", &req).map_err(|e| {
+        let added_version: Version = self.client.post("/version", &req).map_err(|e| {
             format_err!("Error adding version {} to project {}: {}", version, proj, e)
-        })
+        })?;
+        Ok(added_version)
     }
 
     fn get_versions(&self, proj: &str) -> Result<Vec<Version>> {

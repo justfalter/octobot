@@ -302,7 +302,7 @@ fn test_merge_pending_versions_for_real() {
     }),
     );
 
-    test.jira.mock_add_version("SER", new_version, Ok(()));
+    test.jira.mock_add_version("SER", new_version, Ok(Version::new(new_version)));
 
     test.jira.mock_remove_pending_versions(
         "SER-1",
