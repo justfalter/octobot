@@ -59,6 +59,7 @@ tokio-tls = " 0.3.0-alpha.6"
 toml = "0.5.0"
 unidiff = "0.3.2"
 url = "1.7.2"
+async-trait = "0.1.17"
 
 [dependencies.jsonwebtoken]
 git = "https://github.com/matthauck/jsonwebtoken"

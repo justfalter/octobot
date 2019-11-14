@@ -6,22 +6,17 @@ use serde_json;
 
 use crate::util;
 
-pub type FutureResponse = Box<dyn Future<Output = Response<Body>, Error = hyper::Error> + Send>;
-
+#[async_trait]
 pub trait Handler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse;
+    async fn handle(&self, req: Request<Body>) -> Response<Body>;
 
-    fn respond(&self, resp: Response<Body>) -> FutureResponse {
-        Box::new(future::ok(resp))
+    async fn respond_with(&self, status: StatusCode, msg: &str) -> Response<Body> {
+        util::new_msg_resp(status, msg.to_string())
     }
 
-    fn respond_with(&self, status: StatusCode, msg: &str) -> FutureResponse {
-        self.respond(util::new_msg_resp(status, msg.to_string()))
-    }
-
-    fn respond_error(&self, err: &str) -> FutureResponse {
+    async fn respond_error(&self, err: &str) -> Response<Body> {
         error!("InternalServerError: {}", err);
-        self.respond(util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR))
+        util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR)
     }
 }
 
@@ -51,7 +46,7 @@ impl FilteredHandler {
 }
 
 impl Handler for FilteredHandler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    fn handle(&self, req: Request<Body>) -> Response<Body> {
         match self.filter.filter(&req) {
             FilterResult::Halt(resp) => Box::new(future::ok(resp)),
             FilterResult::Continue => self.handler.handle(req),
@@ -60,12 +55,12 @@ impl Handler for FilteredHandler {
 }
 
 impl Handler for NotFoundHandler {
-    fn handle(&self, _: Request<Body>) -> FutureResponse {
+    fn handle(&self, _: Request<Body>) -> Response<Body> {
         Box::new(future::ok(util::new_empty_resp(StatusCode::NOT_FOUND)))
     }
 }
 
-pub fn parse_json<T: DeserializeOwned, F>(req: Request<Body>, func: F) -> FutureResponse
+pub fn parse_json<T: DeserializeOwned, F>(req: Request<Body>, func: F) -> Response<Body>
 where
     F: FnOnce(T) -> Response<Body> + Send + 'static,
 {

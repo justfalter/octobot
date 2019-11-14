@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
 use futures::future;
-use hyper::{self, Body, Method, Request};
-use hyper::service::{NewService, Service};
-use time;
 use log::{debug, error, info};
+use hyper::{Body, Method, Request};
+use hyper::service::{Service};
+use time;
 
 use crate::config::Config;
 use crate::server::admin;
 use crate::server::admin::{Op, RepoAdmin, UserAdmin};
 use crate::server::github_handler::{GithubHandler, GithubHandlerState};
 use crate::server::html_handler::HtmlHandler;
-use crate::server::http::{FilteredHandler, FutureResponse, Handler, NotFoundHandler};
+use crate::server::http::{FilteredHandler, Handler, NotFoundHandler};
 use crate::server::login::{LoginHandler, LoginSessionFilter, LogoutHandler, SessionCheckHandler};
 use crate::server::sessions::Sessions;
 use crate::util;
@@ -37,26 +37,7 @@ impl OctobotService {
     }
 }
 
-impl NewService for OctobotService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Service = OctobotService;
-    type Future = future::FutureResult<OctobotService, hyper::Error>;
-    type InitError = hyper::Error;
-
-    fn new_service(&self) -> Self::Future {
-        future::ok(self.clone())
-    }
-}
-
-
-impl Service for OctobotService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Future = FutureResponse;
-
+impl Service<Body> for OctobotService {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let start = time::now();
 

@@ -1,9 +1,9 @@
-use futures::future::{self, FutureResult};
+use futures::future;
 use http::header::{HeaderMap, HeaderValue};
-use hyper::{self, Body, Request, Response};
+use hyper::{Body, Request};
 use hyper::{StatusCode, Uri};
 use hyper::header::{HOST, LOCATION};
-use hyper::service::{NewService, Service};
+use hyper::service::Service;
 use log::{debug, error};
 
 use crate::util;
@@ -45,25 +45,7 @@ impl RedirectService {
     }
 }
 
-impl NewService for RedirectService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Service = RedirectService;
-    type Future = future::FutureResult<RedirectService, hyper::Error>;
-    type InitError = hyper::Error;
-
-    fn new_service(&self) -> Self::Future {
-        future::ok(self.clone())
-    }
-}
-
-impl Service for RedirectService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Future = FutureResult<Response<Body>, hyper::Error>;
-
+impl Service<Body> for RedirectService {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let host_header = get_host_header(&req.headers());
 
