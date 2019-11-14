@@ -7,7 +7,7 @@ use serde_json;
 
 use crate::util;
 
-pub type FutureResponse = Box<dyn Future<Item = Response<Body>, Error = hyper::Error> + Send>;
+pub type FutureResponse = Box<dyn Future<Output = Response<Body>, Error = hyper::Error> + Send>;
 
 pub trait Handler {
     fn handle(&self, req: Request<Body>) -> FutureResponse;
