@@ -1,15 +1,12 @@
 use std::fs;
 use std::io;
-use std::io::Seek;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use log::{error, info, warn};
 use hyper::server::Server;
-use rustls;
-use rustls::internal::pemfile;
 use tokio;
-use tokio_rustls::TlsAcceptor;
+use native_tls::{Identity, TlsAcceptor};
 
 use crate::config::Config;
 use crate::github;
@@ -73,19 +70,9 @@ fn run_server(config: Config) {
     };
 
     let tls_cfg;
-    if let Some(ref cert_file) = config.main.ssl_cert_file {
-        if let Some(ref key_file) = config.main.ssl_key_file {
-            let key = load_private_key(key_file);
-            let certs = load_certs(cert_file);
-
-            let mut the_cfg = rustls::ServerConfig::new(rustls::NoClientAuth::new());
-            the_cfg.set_single_cert(certs, key).expect("failed to set ssl cert");
-
-            tls_cfg = Some(TlsAcceptor::from(Arc::new(the_cfg)));
-        } else {
-            warn!("Warning: No SSL configured");
-            tls_cfg = None;
-        }
+    if let Some(ref pkcs12_file) = config.main.ssl_pkcs12_file {
+       let identity = load_identity(pkcs12_file, &config.main.ssl_pkcs12_pass.unwrap_or(String::new()));
+       tls_cfg = Some(TlsAcceptor::new(identity).unwrap());
     } else {
         warn!("Warning: No SSL configured");
         tls_cfg = None;
@@ -135,26 +122,13 @@ fn run_server(config: Config) {
     }
 }
 
-fn load_certs(filename: &str) -> Vec<rustls::Certificate> {
-    let certfile = fs::File::open(filename).expect("cannot open certificate file");
-    let mut reader = io::BufReader::new(certfile);
-    pemfile::certs(&mut reader).unwrap()
+fn load_identity(filename: &str, pass: &str) -> native_tls::Identity {
+    let mut bytes = vec![];
+
+    let file = fs::File::open(filename).expect("cannot open pkcs12 identity file");
+    file.read_to_end(&mut bytes).unwrap();
+
+    Identity::from_pkcs12(&bytes, pass).expect("cannot read pkcs12 identity")
 }
 
-fn load_private_key(filename: &str) -> rustls::PrivateKey {
-    let keyfile = fs::File::open(filename).expect("cannot open private key file");
-    let mut reader = io::BufReader::new(keyfile);
 
-    let keys = pemfile::rsa_private_keys(&mut reader).unwrap();
-    if keys.len() == 1 {
-        return keys[0].clone();
-    }
-
-    reader.seek(io::SeekFrom::Start(0)).unwrap();
-    let keys = pemfile::pkcs8_private_keys(&mut reader).unwrap();
-    if keys.len() == 1 {
-        return keys[0].clone();
-    }
-
-    panic!("Unable to find private key in file {}", filename);
-}

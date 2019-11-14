@@ -1,6 +1,7 @@
 use std;
 
 use tokio;
+use futures::future;
 
 pub fn new(num_threads: usize, name: &str) -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new()

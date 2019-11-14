@@ -38,8 +38,8 @@ pub struct MainConfig {
     pub listen_addr: Option<String>,
     pub listen_addr_ssl: Option<String>,
     pub clone_root_dir: String,
-    pub ssl_cert_file: Option<String>,
-    pub ssl_key_file: Option<String>,
+    pub ssl_pkcs12_file: Option<String>,
+    pub ssl_pkcs12_pass: Option<String>,
     pub num_http_threads: Option<usize>,
 }
 
@@ -167,8 +167,8 @@ impl ConfigModel {
                 listen_addr: None,
                 listen_addr_ssl: None,
                 clone_root_dir: String::new(),
-                ssl_cert_file: None,
-                ssl_key_file: None,
+                ssl_pkcs12_file: None,
+                ssl_pkcs12_pass: None,
                 num_http_threads: None,
             },
             admin: None,
