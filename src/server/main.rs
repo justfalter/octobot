@@ -4,7 +4,6 @@ use std::io::Seek;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::{Future, Stream};
 use log::{error, info, warn};
 use hyper::server::Server;
 use rustls;

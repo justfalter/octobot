@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use futures::{future, Future};
+use futures::future;
 use reqwest;
 use serde_derive::Serialize;
 use tokio;

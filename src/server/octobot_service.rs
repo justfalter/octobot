@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::future::{self, Future};
+use futures::future;
 use hyper::{self, Body, Method, Request};
 use hyper::service::{NewService, Service};
 use time;

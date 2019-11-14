@@ -1,8 +1,6 @@
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use futures::Future;
-use futures::Stream;
 use hyper::{Body, Request, StatusCode};
 use log::{info, error};
 use regex::Regex;
