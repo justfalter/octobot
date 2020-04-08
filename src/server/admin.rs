@@ -2,7 +2,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hyper::{Body, Request};
+use async_trait::async_trait;
+use hyper::{Body, Request, Response};
 use hyper::StatusCode;
 use serde_json;
 use serde_derive::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use log::error;
 use crate::config::{Config, JiraConfig};
 use crate::jira;
 use crate::repos::RepoInfo;
-use crate::server::http::{FutureResponse, Handler, parse_json};
+use crate::server::http::{Handler, parse_json};
 use crate::users::UserInfo;
 use crate::util;
 use crate::version;
@@ -53,8 +54,9 @@ impl RepoAdmin {
 }
 
 
+#[async_trait]
 impl Handler for UserAdmin {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         match &self.op {
             &Op::List => self.get_all(req),
             &Op::Create => self.create(req),
@@ -65,7 +67,7 @@ impl Handler for UserAdmin {
 }
 
 impl UserAdmin {
-    fn get_all(&self, _: Request<Body>) -> FutureResponse {
+    fn get_all(&self, _: Request<Body>) -> Response<Body> {
         #[derive(Serialize)]
         struct UsersResp {
             users: Vec<UserInfo>,
@@ -86,10 +88,10 @@ impl UserAdmin {
                 String::new()
             }
         };
-        self.respond(util::new_json_resp(users))
+        util::new_json_resp(users)
     }
 
-    fn create(&self, req: Request<Body>) -> FutureResponse {
+    fn create(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
         parse_json(req, move |user: UserInfo| {
             if let Err(e) = config.users_write().insert_info(&user) {
@@ -100,7 +102,7 @@ impl UserAdmin {
         })
     }
 
-    fn update(&self, req: Request<Body>) -> FutureResponse {
+    fn update(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
 
         parse_json(req, move |user: UserInfo| {
@@ -112,7 +114,7 @@ impl UserAdmin {
         })
     }
 
-    fn delete(&self, req: Request<Body>) -> FutureResponse {
+    fn delete(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
 
         let query = util::parse_query(req.uri().query());
@@ -129,8 +131,9 @@ impl UserAdmin {
     }
 }
 
+#[async_trait]
 impl Handler for RepoAdmin {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         match &self.op {
             &Op::List => self.get_all(req),
             &Op::Create => self.create(req),
@@ -141,7 +144,7 @@ impl Handler for RepoAdmin {
 }
 
 impl RepoAdmin {
-    fn get_all(&self, _: Request<Body>) -> FutureResponse {
+    fn get_all(&self, _: Request<Body>) -> Response<Body> {
         #[derive(Serialize)]
         struct ReposResp {
             repos: Vec<RepoInfo>,
@@ -165,7 +168,7 @@ impl RepoAdmin {
         self.respond(util::new_json_resp(repos))
     }
 
-    fn create(&self, req: Request<Body>) -> FutureResponse {
+    fn create(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
         parse_json(req, move |repo: RepoInfo| {
             if let Err(e) = config.repos_write().insert_info(&repo) {
@@ -176,7 +179,7 @@ impl RepoAdmin {
         })
     }
 
-    fn update(&self, req: Request<Body>) -> FutureResponse {
+    fn update(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
 
         parse_json(req, move |repo: RepoInfo| {
@@ -188,7 +191,7 @@ impl RepoAdmin {
         })
     }
 
-    fn delete(&self, req: Request<Body>) -> FutureResponse {
+    fn delete(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
 
         let query = util::parse_query(req.uri().query());
@@ -230,8 +233,9 @@ struct MergeVersionsResp {
     versions: HashMap<String, Vec<version::Version>>,
 }
 
+#[async_trait]
 impl Handler for MergeVersions {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
         parse_json(req, move |merge_req: MergeVersionsReq| {
             // make a copy of the jira config so we can modify the auth

@@ -1,4 +1,5 @@
-use futures::future::{self, Future};
+use async_trait::async_trait;
+use futures::future;
 use hyper::{self, Body, Request, Response, StatusCode};
 use log::error;
 use serde::de::DeserializeOwned;
@@ -7,14 +8,19 @@ use serde_json;
 use crate::util;
 
 #[async_trait]
+pub trait MyService {
+    async fn handle(&self, req: Request<Body>) -> Response<Body>;
+}
+
+#[async_trait]
 pub trait Handler {
     async fn handle(&self, req: Request<Body>) -> Response<Body>;
 
-    async fn respond_with(&self, status: StatusCode, msg: &str) -> Response<Body> {
+    fn respond_with(&self, status: StatusCode, msg: &str) -> Response<Body> {
         util::new_msg_resp(status, msg.to_string())
     }
 
-    async fn respond_error(&self, err: &str) -> Response<Body> {
+    fn respond_error(&self, err: &str) -> Response<Body> {
         error!("InternalServerError: {}", err);
         util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR)
     }

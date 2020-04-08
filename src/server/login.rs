@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use hyper::{Body, Request, Response, StatusCode};
 use log::{error, info, warn};
 use ring::{digest, pbkdf2};
@@ -9,7 +10,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::ldap_auth;
-use crate::server::http::{parse_json, Filter, FilterResult, FutureResponse, Handler};
+use crate::server::http::{parse_json, Filter, FilterResult, Handler};
 use crate::server::sessions::Sessions;
 use crate::util;
 
@@ -107,8 +108,9 @@ fn get_session(req: &Request<Body>) -> Option<String> {
         .map(|h| String::from_utf8_lossy(h.as_bytes()).into_owned())
 }
 
+#[async_trait]
 impl Handler for LoginHandler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let config = self.config.clone();
         let sessions = self.sessions.clone();
 
@@ -157,29 +159,31 @@ fn invalid_session() -> Response<Body> {
     util::new_msg_resp(StatusCode::FORBIDDEN, "Invalid session")
 }
 
+#[async_trait]
 impl Handler for LogoutHandler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let sess: String = match get_session(&req) {
             Some(s) => s.to_string(),
-            None => return self.respond(invalid_session()),
+            None => return invalid_session(),
         };
 
         self.sessions.remove_session(&sess);
-        self.respond(util::new_json_resp("{}".into()))
+        util::new_json_resp("{}".into())
     }
 }
 
+#[async_trait]
 impl Handler for SessionCheckHandler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let sess: String = match get_session(&req) {
             Some(s) => s.to_string(),
-            None => return self.respond(invalid_session()),
+            None => return invalid_session(),
         };
 
         if self.sessions.is_valid_session(&sess) {
             self.respond_with(StatusCode::OK, "")
         } else {
-            self.respond(invalid_session())
+            invalid_session()
         }
     }
 }

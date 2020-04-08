@@ -1,12 +1,14 @@
+use async_trait::async_trait;
 use futures::future;
 use http::header::{HeaderMap, HeaderValue};
-use hyper::{Body, Request};
+use hyper::{Body, Request, Response};
 use hyper::{StatusCode, Uri};
 use hyper::header::{HOST, LOCATION};
 use hyper::service::Service;
 use log::{debug, error};
 
 use crate::util;
+use crate::server::http::MyService;
 
 #[derive(Clone)]
 pub struct RedirectService {
@@ -45,15 +47,16 @@ impl RedirectService {
     }
 }
 
-impl Service<Body> for RedirectService {
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+#[async_trait]
+impl MyService for RedirectService {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let host_header = get_host_header(&req.headers());
 
         let new_uri_str = self.rewrite_uri(req.uri().clone(), host_header);
         let new_uri = match HeaderValue::from_str(&new_uri_str) {
             Err(e) => {
                 error!("Invalid Location header '{}': {}", new_uri_str, e);
-                return future::ok(util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR));
+                return util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR);
             }
             Ok(uri) => uri,
         };
@@ -62,7 +65,7 @@ impl Service<Body> for RedirectService {
         let mut resp = util::new_empty_resp(StatusCode::MOVED_PERMANENTLY);
         resp.headers_mut().insert(LOCATION, new_uri);
 
-        future::ok(resp)
+        resp
     }
 }
 

@@ -4,9 +4,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use log::{error, info, warn};
+use hyper::{Request, Body};
 use hyper::server::Server;
+use hyper::service::service_fn;
+use hyper::service::make_service_fn;
+use hyper::server::conn::AddrStream;
 use tokio;
-use native_tls::{Identity, TlsAcceptor};
+use tokio_tls;
+use native_tls::{self, Identity};
 
 use crate::config::Config;
 use crate::github;
@@ -17,14 +22,18 @@ use crate::server::github_handler::GithubHandlerState;
 use crate::server::octobot_service::OctobotService;
 use crate::server::redirect_service::RedirectService;
 use crate::server::sessions::Sessions;
+use crate::server::http::MyService;
 
 pub fn start(config: Config) {
-    let num_http_threads = config.main.num_http_threads.unwrap_or(20);
+    let num_http_threads = std::cmp::max(2, config.main.num_http_threads.unwrap_or(20));
 
-    runtime::run(num_http_threads, move || run_server(config));
+    let rt = runtime::new(num_http_threads, "runtime");
+    rt.block_on(async move {
+        run_server(config)
+    });
 }
 
-fn run_server(config: Config) {
+async fn run_server(config: Config) {
     let config = Arc::new(config);
 
 
@@ -69,35 +78,65 @@ fn run_server(config: Config) {
         None => "0.0.0.0:3001".parse().unwrap(),
     };
 
-    let tls_cfg;
+    let tls_acceptor;
     if let Some(ref pkcs12_file) = config.main.ssl_pkcs12_file {
        let identity = load_identity(pkcs12_file, &config.main.ssl_pkcs12_pass.unwrap_or(String::new()));
-       tls_cfg = Some(TlsAcceptor::new(identity).unwrap());
+       tls_acceptor = Some(tokio_tls::TlsAcceptor::from(native_tls::TlsAcceptor::builder(identity).build()?));
     } else {
         warn!("Warning: No SSL configured");
-        tls_cfg = None;
+        tls_acceptor = None;
     }
 
     let ui_sessions = Arc::new(Sessions::new());
     let github_handler_state = Arc::new(GithubHandlerState::new(config.clone(), github.clone(), jira.clone()));
 
-    let main_service = OctobotService::new(config.clone(), ui_sessions.clone(), github_handler_state.clone());
-    let redirect_service = RedirectService::new(https_addr.port());
+    let main_service_impl = OctobotService::new(config.clone(), ui_sessions.clone(), github_handler_state.clone());
+    let redirect_service_impl = RedirectService::new(https_addr.port());
 
-    if let Some(tls_cfg) = tls_cfg {
+    let main_service = make_service_fn(|_: &AddrStream| {
+        let service = main_service_impl.clone();
+        async move {
+            Ok::<_, hyper::Error>(service_fn(move |req: Request<hyper::Body>| async move {
+                Ok::<_, hyper::Error>(
+                    service.handle(req)
+                )
+            }))
+        }
+    });
+
+    let redirect_service = make_service_fn(|_: &AddrStream| {
+        let service = redirect_service_impl.clone();
+        async move {
+            Ok::<_, hyper::Error>(service_fn(move |req: Request<hyper::Body>| async move {
+                Ok::<_, hyper::Error>(
+                    service.handle(req)
+                )
+            }))
+        }
+    });
+
+    if let Some(tls_acceptor) = tls_acceptor {
         // setup main service on https
         {
-            let tcp = tokio::net::TcpListener::bind(&https_addr).unwrap();
+            let tcp = tokio::net::TcpListener::bind(&https_addr).await.unwrap();
             let tls = tcp.incoming()
-                .and_then(move |s| tls_cfg.accept(s))
-                .then(|r| match r {
-                    Ok(x) => Ok::<_, io::Error>(Some(x)),
-                    Err(e) => {
-                        error!("tls error: {}", e);
-                        Ok::<_, io::Error>(None)
-                    }
+                .for_each(move |tcp| {
+                    let tls_accept = tls_acceptor.accept()
+                        .then(|r| match r {
+                            Ok(x) => Ok::<_, io::Error>(Some(x)),
+                            Err(e) => {
+                                error!("tls error: {}", e);
+                                Ok::<_, io::Error>(None)
+                            }
+                        })
+                        .filter_map(|x| x);
+                    tokio::spawn(tls_accept);
+                    Ok(())
                 })
-                .filter_map(|x| x);
+                .map_err(|err| {
+                    error!("server error {:?}", err);
+                });
+
             let server = Server::builder(tls).serve(main_service).map_err(|e| error!("server error: {}", e));
             info!("Listening (HTTPS) on {}", https_addr);
             tokio::spawn(server);

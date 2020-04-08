@@ -2,10 +2,11 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 
+use async_trait::async_trait;
 use hyper::{Body, Request, Response};
 use hyper::header::CONTENT_TYPE;
 
-use crate::server::http::{FutureResponse, Handler};
+use crate::server::http::Handler;
 
 fn is_dev_mode() -> bool {
     env::var("DEVMODE").is_ok()
@@ -42,11 +43,12 @@ impl HtmlHandler {
     }
 }
 
+#[async_trait]
 impl Handler for HtmlHandler {
-    fn handle(&self, _: Request<Body>) -> FutureResponse {
+    async fn handle(&self, _: Request<Body>) -> Response<Body> {
         let mut resp = Response::new(Body::from(self.contents()));
         resp.headers_mut().insert(CONTENT_TYPE, "text/html".parse().unwrap());
 
-        self.respond(resp)
+        resp
     }
 }

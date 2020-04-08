@@ -1,7 +1,8 @@
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use hyper::{Body, Request, StatusCode};
+use async_trait::async_trait;
+use hyper::{Body, Request, Response, StatusCode};
 use log::{info, error};
 use regex::Regex;
 use serde_json;
@@ -19,7 +20,7 @@ use crate::pr_merge::{self, PRMergeRequest};
 use crate::repo_version::{self, RepoVersionRequest};
 use crate::runtime;
 use crate::server::github_verify::GithubWebhookVerifier;
-use crate::server::http::{FutureResponse, Handler};
+use crate::server::http::Handler;
 use crate::slack::{self, SlackAttachmentBuilder, SlackRequest};
 use crate::util;
 use crate::worker::{Worker, TokioWorker};
@@ -116,15 +117,16 @@ impl GithubHandler {
     }
 }
 
+#[async_trait]
 impl Handler for GithubHandler {
-    fn handle(&self, req: Request<Body>) -> FutureResponse {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let event_id;
         {
             let values = req.headers().get_all("x-github-delivery").iter().collect::<Vec<_>>();
             if values.len() != 1 {
                 let msg = "Expected to find exactly one event id header";
                 error!("{}", msg);
-                return self.respond(util::new_bad_req_resp(msg));
+                return util::new_bad_req_resp(msg);
             }
 
             event_id = String::from_utf8_lossy(values[0].as_bytes()).into_owned();
@@ -136,7 +138,7 @@ impl Handler for GithubHandler {
             if !util::check_unique_event(event_id.clone(), &mut *recent_events, 1000, 100) {
                 let msg = format!("Duplicate X-Github-Delivery header: {}", event_id);
                 error!("{}", msg);
-                return self.respond(util::new_bad_req_resp(msg));
+                return util::new_bad_req_resp(msg);
             }
         }
 
@@ -146,7 +148,7 @@ impl Handler for GithubHandler {
             if values.len() != 1 {
                 let msg = "Expected to find exactly one event header";
                 error!("{}", msg);
-                return self.respond(util::new_bad_req_resp(msg));
+                return util::new_bad_req_resp(msg);
             }
             event = String::from_utf8_lossy(values[0].as_bytes()).into_owned();
         }
@@ -160,93 +162,103 @@ impl Handler for GithubHandler {
         let force_push = self.state.force_push_worker.clone();
         let slack = self.state.slack_worker.clone();
 
-        Box::new(req.into_body().concat2().map(move |body| {
-            let verifier = GithubWebhookVerifier { secret: config.github.webhook_secret.clone() };
-            if !verifier.is_req_valid(&headers, &body) {
-                return util::new_msg_resp(StatusCode::FORBIDDEN, "Invalid signature");
-            }
-
-            let mut data: github::HookBody = match serde_json::from_slice(&body) {
-                Ok(h) => h,
+        let mut body_obj = req.into_body();
+        let mut body = Vec::new();
+        while let Some(next) = body_obj.next().await {
+            match next {
+                Ok(chunk) => body.extend(chunk),
                 Err(e) => {
-                    error!("Error parsing json: {}\n---\n{}\n---\n", e, String::from_utf8_lossy(&body));
-                    return util::new_bad_req_resp(format!("Error parsing JSON: {}", e));
-                }
-            };
-
-            let github_session = match github_app.new_session(&data.repository.owner.login(), &data.repository.name) {
-                // Note: this doesn't really need to be an Arc anymore...
-                Ok(g) => Arc::new(g),
-                Err(e) => {
-                    error!(
-                        "Error creating a new github session for {}/{}: {}",
-                        data.repository.owner.login(),
-                        &data.repository.name,
-                        e
-                    );
-                    return util::new_bad_req_resp("Could not create github session");
-                }
-            };
-
-            let action = match data.action {
-                Some(ref a) => a.clone(),
-                None => String::new(),
-            };
-
-            // Try to remap issues which are PRs as pull requests. This gives us access to PR information
-            // like reviewers which do not exist for issues.
-            if let Some(ref issue) = data.issue {
-                if data.pull_request.is_none() && issue.html_url.contains("/pull/") {
-                    data.pull_request = match github_session.get_pull_request(
-                        &data.repository.owner.login(),
-                        &data.repository.name,
-                        issue.number,
-                    ) {
-                        Ok(pr) => Some(pr),
-                        Err(e) => {
-                            error!("Error refetching issue #{} as pull request: {}", issue.number, e);
-                            None
-                        }
-                    };
+                    error!("Failed to read request body: {}", e);
+                    return self.respond_error("Failed to read request body");
                 }
             }
+        }
 
-            // refetch PR if present to get requested reviewers: they don't come on each webhook :cry:
-            let mut changed_pr = None;
-            if let Some(ref pull_request) = data.pull_request {
-                if pull_request.requested_reviewers.is_none() || pull_request.reviews.is_none() {
-                    match github_session.get_pull_request(
-                        &data.repository.owner.login(),
-                        &data.repository.name,
-                        pull_request.number,
-                    ) {
-                        Ok(pr) => changed_pr = Some(pr),
-                        Err(e) => error!("Error refetching pull request to get reviewers: {}", e),
-                    };
-                }
-            }
-            if let Some(changed_pr) = changed_pr {
-                data.pull_request = Some(changed_pr);
-            }
+        let verifier = GithubWebhookVerifier { secret: config.github.webhook_secret.clone() };
+        if !verifier.is_req_valid(&headers, &body) {
+            return util::new_msg_resp(StatusCode::FORBIDDEN, "Invalid signature");
+        }
 
-            let handler = GithubEventHandler {
-                event: event.clone(),
-                data: data,
-                action: action,
-                config: config.clone(),
-                messenger: Box::new(messenger::new(config.clone(), slack)),
-                github_session: github_session,
-                jira_session: jira_session,
-                pr_merge: pr_merge,
-                repo_version: repo_version,
-                force_push: force_push,
-            };
-
-            match handler.handle_event() {
-                Some((status, resp)) => util::new_msg_resp(status, resp),
-                None => util::new_msg_resp(StatusCode::OK, format!("Unhandled event: {}", event)),
+        let mut data: github::HookBody = match serde_json::from_slice(&body) {
+            Ok(h) => h,
+            Err(e) => {
+                error!("Error parsing json: {}\n---\n{}\n---\n", e, String::from_utf8_lossy(&body));
+                return util::new_bad_req_resp(format!("Error parsing JSON: {}", e));
             }
-        }))
+        };
+
+        let github_session = match github_app.new_session(&data.repository.owner.login(), &data.repository.name) {
+            // Note: this doesn't really need to be an Arc anymore...
+            Ok(g) => Arc::new(g),
+            Err(e) => {
+                error!(
+                    "Error creating a new github session for {}/{}: {}",
+                    data.repository.owner.login(),
+                    &data.repository.name,
+                    e
+                );
+                return util::new_bad_req_resp("Could not create github session");
+            }
+        };
+
+        let action = match data.action {
+            Some(ref a) => a.clone(),
+            None => String::new(),
+        };
+
+        // Try to remap issues which are PRs as pull requests. This gives us access to PR information
+        // like reviewers which do not exist for issues.
+        if let Some(ref issue) = data.issue {
+            if data.pull_request.is_none() && issue.html_url.contains("/pull/") {
+                data.pull_request = match github_session.get_pull_request(
+                    &data.repository.owner.login(),
+                    &data.repository.name,
+                    issue.number,
+                ) {
+                    Ok(pr) => Some(pr),
+                    Err(e) => {
+                        error!("Error refetching issue #{} as pull request: {}", issue.number, e);
+                        None
+                    }
+                };
+            }
+        }
+
+        // refetch PR if present to get requested reviewers: they don't come on each webhook :cry:
+        let mut changed_pr = None;
+        if let Some(ref pull_request) = data.pull_request {
+            if pull_request.requested_reviewers.is_none() || pull_request.reviews.is_none() {
+                match github_session.get_pull_request(
+                    &data.repository.owner.login(),
+                    &data.repository.name,
+                    pull_request.number,
+                ) {
+                    Ok(pr) => changed_pr = Some(pr),
+                    Err(e) => error!("Error refetching pull request to get reviewers: {}", e),
+                };
+            }
+        }
+        if let Some(changed_pr) = changed_pr {
+            data.pull_request = Some(changed_pr);
+        }
+
+        let handler = GithubEventHandler {
+            event: event.clone(),
+            data: data,
+            action: action,
+            config: config.clone(),
+            messenger: Box::new(messenger::new(config.clone(), slack)),
+            github_session: github_session,
+            jira_session: jira_session,
+            pr_merge: pr_merge,
+            repo_version: repo_version,
+            force_push: force_push,
+        };
+
+        match handler.handle_event() {
+            Some((status, resp)) => util::new_msg_resp(status, resp),
+            None => util::new_msg_resp(StatusCode::OK, format!("Unhandled event: {}", event)),
+        }
     }
 }
 

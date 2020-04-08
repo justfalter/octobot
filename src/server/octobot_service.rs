@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::future;
 use log::{debug, error, info};
-use hyper::{Body, Method, Request};
-use hyper::service::{Service};
+use hyper::{Body, Method, Request, Response, StatusCode};
+use hyper::service::Service;
 use time;
 
 use crate::config::Config;
@@ -12,6 +13,7 @@ use crate::server::admin::{Op, RepoAdmin, UserAdmin};
 use crate::server::github_handler::{GithubHandler, GithubHandlerState};
 use crate::server::html_handler::HtmlHandler;
 use crate::server::http::{FilteredHandler, Handler, NotFoundHandler};
+use crate::server::http::MyService;
 use crate::server::login::{LoginHandler, LoginSessionFilter, LogoutHandler, SessionCheckHandler};
 use crate::server::sessions::Sessions;
 use crate::util;
@@ -37,8 +39,9 @@ impl OctobotService {
     }
 }
 
-impl Service<Body> for OctobotService {
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+#[async_trait]
+impl MyService for OctobotService {
+    async fn handle(&self, req: Request<Body>) -> Response<Body> {
         let start = time::now();
 
         let method = req.method().clone();
@@ -54,7 +57,7 @@ impl Service<Body> for OctobotService {
                 })
                 .or_else(move |e| {
                     error!("Error processing request: {}", e);
-                    future::err(e)
+                    util::new_empty_resp(StatusCode::INTERNAL_SERVER_ERROR)
                 }),
         )
     }
